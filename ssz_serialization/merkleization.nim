@@ -22,7 +22,7 @@ import
   results,
   nimcrypto/[hash, sha2],
   serialization/testing/tracing,
-  "."/[bitseqs, codec, digest, types]
+  "."/[bitseqs, codec, digest, merkleization_batch, types]
 
 export
   results, hash.fromHex, codec, bitseqs, types, digest
@@ -489,7 +489,7 @@ func hash_tree_root_multi(
     x: auto,
     indices: openArray[GeneralizedIndex],
     roots: var openArray[Digest],
-    loopOrder: seq[int],
+    loopOrder: seq[BatchIndexRef],
     slice: Slice[int],
     atLayer = 0): Result[void, string] {.gcsafe, raises: [].}
 
@@ -754,7 +754,7 @@ func hashTreeRootAux[T](
     x: T,
     indices: openArray[GeneralizedIndex],
     roots: var openArray[Digest],
-    loopOrder: seq[int],
+    loopOrder: seq[BatchIndexRef],
     slice: Slice[int],
     atLayer: int): Result[void, string] =
   mixin hash_tree_root, toSszType
@@ -1129,7 +1129,7 @@ func hashTreeRootCached*(
     x: HashArray,
     indices: openArray[GeneralizedIndex],
     roots: var openArray[Digest],
-    loopOrder: seq[int],
+    loopOrder: seq[BatchIndexRef],
     slice: Slice[int],
     atLayer: int): Result[void, string] =
   mixin toSszType
@@ -1177,7 +1177,7 @@ func hashTreeRootCached*(
     x: HashList,
     indices: openArray[GeneralizedIndex],
     roots: var openArray[Digest],
-    loopOrder: seq[int],
+    loopOrder: seq[BatchIndexRef],
     slice: Slice[int],
     atLayer: int): Result[void, string] =
   mixin toSszType
@@ -1265,7 +1265,7 @@ func hash_tree_root_multi(
     x: auto,
     indices: openArray[GeneralizedIndex],
     roots: var openArray[Digest],
-    loopOrder: seq[int],
+    loopOrder: seq[BatchIndexRef],
     slice: Slice[int],
     atLayer = 0): Result[void, string] =
   trs "STARTING HASH TREE ROOT FOR TYPE ", name(typeof(x)),
@@ -1305,48 +1305,52 @@ func cmpDepthFirst(x, y: GeneralizedIndex): int =
   cmp(x.normalize, y.normalize)
 
 func merkleizationLoopOrderNimvm(
-    indices: openArray[GeneralizedIndex]): seq[int] {.compileTime.} =
-  result = toSeq(indices.low .. indices.high)
+    indices: openArray[GeneralizedIndex]): seq[BatchIndexRef] {.compileTime.} =
+  result = toSeq(indices.low.BatchIndexRef .. indices.high.BatchIndexRef)
   let idx = toSeq(indices)
-  result.sort do (x, y: int) -> int:
+  result.sort do (x, y: BatchIndexRef) -> int:
     cmpDepthFirst(idx[x], idx[y])
 
 func merkleizationLoopOrderRegular(
-    indices: openArray[GeneralizedIndex]): seq[int] =
-  result = toSeq(indices.low .. indices.high)
+    indices: openArray[GeneralizedIndex]): seq[BatchIndexRef] =
+  result = toSeq(indices.low.BatchIndexRef .. indices.high.BatchIndexRef)
   let idx = makeUncheckedArray(unsafeAddr indices[0])
-  result.sort do (x, y: int) -> int:
+  result.sort do (x, y: BatchIndexRef) -> int:
     cmpDepthFirst(idx[x], idx[y])
 
 func merkleizationLoopOrder(
-    indices: openArray[GeneralizedIndex]): seq[int] =
+    indices: openArray[GeneralizedIndex]): Result[seq[BatchIndexRef], string] =
+  if indices.len > BatchIndexRef.high.int:
+    return err("Unsupported multiproof complexity (" & $indices.len & ")")
   when nimvm:
-    merkleizationLoopOrderNimvm(indices)
+    ok merkleizationLoopOrderNimvm(indices)
   else:
-    merkleizationLoopOrderRegular(indices)
+    ok merkleizationLoopOrderRegular(indices)
 
 func validateIndices(
     indices: openArray[GeneralizedIndex],
-    loopOrder: seq[int]): Result[void, string] =
-  var
-    prev = indices[loopOrder[0]]
-    prevLayer = log2trunc(prev)
-  if prev < 1.GeneralizedIndex: return err("Invalid generalized index.")
-  for i in 1 .. loopOrder.high:
-    let
-      curr = indices[loopOrder[i]]
-      currLayer = log2trunc(curr)
-      indicesOverlap =
-        if currLayer < prevLayer:
-          (prev shr (prevLayer - currLayer)) == curr
-        elif currLayer > prevLayer:
-          (curr shr (currLayer - prevLayer)) == prev
-        else:
-          curr == prev
-    if indicesOverlap:
-      return err("Given indices cover some leafs multiple times.")
-    prev = curr
-    prevLayer = currLayer
+    loopOrder: seq[BatchIndexRef]): Result[void, string] =
+  doAssert indices.len == loopOrder.len
+  if loopOrder.len > 0:
+    var
+      prev = indices[loopOrder[0]]
+      prevLayer = log2trunc(prev)
+    if prev < 1.GeneralizedIndex: return err("Invalid generalized index.")
+    for i in 1 .. loopOrder.high:
+      let
+        curr = indices[loopOrder[i]]
+        currLayer = log2trunc(curr)
+        indicesOverlap =
+          if currLayer < prevLayer:
+            (prev shr (prevLayer - currLayer)) == curr
+          elif currLayer > prevLayer:
+            (curr shr (currLayer - prevLayer)) == prev
+          else:
+            curr == prev
+      if indicesOverlap:
+        return err("Given indices cover some leafs multiple times.")
+      prev = curr
+      prevLayer = currLayer
   ok()
 
 func hash_tree_root*(
@@ -1360,7 +1364,7 @@ func hash_tree_root*(
     roots[0] = hash_tree_root(x)
     ok()
   else:
-    let loopOrder = merkleizationLoopOrder(indices)
+    let loopOrder = ? merkleizationLoopOrder(indices)
     ? validateIndices(indices, loopOrder)
     let slice = 0 ..< loopOrder.len
     hash_tree_root_multi(x, indices, roots, loopOrder, slice)
@@ -1377,14 +1381,16 @@ func hash_tree_root*(
       roots[0] = hash_tree_root(x)
       ok()
     else:
-      const
-        loopOrder = merkleizationLoopOrder(indices)
-        v = validateIndices(indices, loopOrder)
-      when v.isErr:
-        err(v.error)
+      const loopOrder = merkleizationLoopOrder(indices)
+      when loopOrder.isErr:
+        err(loopOrder.error)
       else:
-        const slice = 0 ..< loopOrder.len
-        hash_tree_root_multi(x, indices, roots, loopOrder, slice)
+        const v = validateIndices(indices, loopOrder.unsafeGet)
+        when v.isErr:
+          err(v.error)
+        else:
+          const slice = 0 ..< loopOrder.unsafeGet.len
+          hash_tree_root_multi(x, indices, roots, loopOrder.unsafeGet, slice)
 
 func hash_tree_root*(
     x: auto,
@@ -1395,7 +1401,7 @@ func hash_tree_root*(
   elif indices.len == 1 and indices[0] == 1.GeneralizedIndex:
     ok(@[hash_tree_root(x)])
   else:
-    let loopOrder = merkleizationLoopOrder(indices)
+    let loopOrder = ? merkleizationLoopOrder(indices)
     ? validateIndices(indices, loopOrder)
     let slice = 0 ..< loopOrder.len
     var roots = newSeq[Digest](indices.len)
@@ -1413,19 +1419,22 @@ func hash_tree_root*(
     when indices.len == 1 and indices[0] == 1.GeneralizedIndex:
       ResultType.ok([hash_tree_root(x)])
     else:
-      const
-        loopOrder = merkleizationLoopOrder(indices)
-        v = validateIndices(indices, loopOrder)
-      when v.isErr:
+      const loopOrder = merkleizationLoopOrder(indices)
+      when loopOrder.isErr:
         ResultType.err(v.error)
       else:
-        var roots {.noinit.}: array[indices.len, Digest]
-        const slice = 0 ..< loopOrder.len
-        let w = hash_tree_root_multi(x, indices, roots, loopOrder, slice)
-        if w.isErr:
-          ResultType.err(w.error)
+        const v = validateIndices(indices, loopOrder.unsafeGet)
+        when v.isErr:
+          ResultType.err(v.error)
         else:
-          ResultType.ok(roots)
+          var roots {.noinit.}: array[indices.len, Digest]
+          const slice = 0 ..< loopOrder.unsafeGet.len
+          let w = hash_tree_root_multi(
+            x, indices, roots, loopOrder.unsafeGet, slice)
+          if w.isErr:
+            ResultType.err(w.error)
+          else:
+            ResultType.ok(roots)
 
 func hash_tree_root*(
     x: auto,
@@ -1437,7 +1446,7 @@ func hash_tree_root*(
     ok(hash_tree_root(x))
   else:
     const
-      loopOrder = @[0]
+      loopOrder = @[0.BatchIndexRef]
       slice = 0 ..< loopOrder.len
     var roots {.noinit.}: array[1, Digest]
     ? hash_tree_root_multi(x, [index], roots, loopOrder, slice)
@@ -1453,7 +1462,7 @@ func hash_tree_root*(
     ok(hash_tree_root(x))
   else:
     const
-      loopOrder = @[0]
+      loopOrder = @[0.BatchIndexRef]
       slice = 0 ..< loopOrder.len
     var roots {.noinit.}: array[1, Digest]
     ? hash_tree_root_multi(x, [index], roots, loopOrder, slice)
