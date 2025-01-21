@@ -7,6 +7,20 @@
 
 {.push raises: [].}
 
+import ./types
+
 type
   BatchIndexRef* = uint8
     ## Refers to an individual entry within a batch request.
+
+  BatchRequest*[Q: static[int]] = object
+    when Q > 0:
+      indices*: array[Q, GeneralizedIndex]
+        ## Up through `BatchIndexRef.high` entries that each contain a
+        ## `GeneralizedIndex` for which the corresponding `Digest` is queried.
+      loopOrder*: array[Q, BatchIndexRef]
+        ## Order in which `indices` will be visited while fulfilling queries.
+        ## Refers to index of indices, e.g., `indices[loopOrder[i]]` for access.
+    elif Q == -1:  # Dynamic length
+      indices*: seq[GeneralizedIndex]
+      loopOrder*: seq[BatchIndexRef]

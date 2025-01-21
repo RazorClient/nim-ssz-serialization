@@ -100,6 +100,7 @@ suite "Merkle proofs":
       let
         indices = indices_int.mapIt(it.GeneralizedIndex)
         helper_indices = get_helper_indices(indices)
+      let
         leaves = indices.mapIt(nodes[it])
         proof = helper_indices.mapIt(nodes[it])
         root = nodes[1]

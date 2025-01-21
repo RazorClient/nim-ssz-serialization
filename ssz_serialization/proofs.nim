@@ -59,25 +59,51 @@ iterator get_path_indices*(
     index = generalized_index_parent(index)
 
 # https://github.com/ethereum/consensus-specs/blob/v1.1.6/ssz/merkle-proofs.md#merkle-multiproofs
-func get_helper_indices*(
-    indices: varargs[GeneralizedIndex]): seq[GeneralizedIndex] =
-  ## Get the generalized indices of all "extra" chunks in the tree needed
-  ## to prove the chunks with the given generalized indices. Note that the
-  ## decreasing order is chosen deliberately to ensure equivalence to the order
-  ## of hashes in a regular single-item Merkle proof in the single-item case.
-  var all_helper_indices = initHashSet[GeneralizedIndex]()
+func get_helper_indices_set(
+    indices: varargs[GeneralizedIndex]): HashSet[GeneralizedIndex] =
+  var res = initHashSet[GeneralizedIndex]()
   for index in indices:
     for idx in get_branch_indices(index):
-      all_helper_indices.incl idx
+      res.incl idx
   for index in indices:
     for idx in get_path_indices(index):
-      all_helper_indices.excl idx
-
-  var res = newSeqOfCap[GeneralizedIndex](all_helper_indices.len)
-  for idx in all_helper_indices:
-    res.add idx
-  res.sort(SortOrder.Descending)
+      res.excl idx
   res
+
+func sort_helper_indices(
+    indices_set: HashSet[GeneralizedIndex],
+    sorted_indices: var openArray[GeneralizedIndex]) =
+  # The decreasing order is chosen deliberately to ensure equivalence to the
+  # hash order in a regular single-item Merkle proof in the single-item case.
+  var i = 0
+  for idx in indices_set:
+    sorted_indices[i] = idx
+    inc i
+  sorted_indices.sort(SortOrder.Descending)
+
+func get_helper_indices*(
+    indices: openArray[GeneralizedIndex]): seq[GeneralizedIndex] =
+  ## Get the generalized indices of all "extra" chunks in the tree needed
+  ## to prove the chunks with the given generalized indices.
+  let all_helper_indices = indices.get_helper_indices_set()
+  var res = newSeqUninitialized[GeneralizedIndex](all_helper_indices.len)
+  all_helper_indices.sort_helper_indices(res)
+  res
+
+func get_helper_indices*(index: GeneralizedIndex): seq[GeneralizedIndex] =
+  get_helper_indices([index])
+
+func get_helper_indices*(
+    indices: static openArray[GeneralizedIndex]): auto =
+  ## Get the generalized indices of all "extra" chunks in the tree needed
+  ## to prove the chunks with the given generalized indices.
+  const all_helper_indices = indices.get_helper_indices_set()
+  var res {.noinit.}: array[all_helper_indices.len, GeneralizedIndex]
+  all_helper_indices.sort_helper_indices(res)
+  res
+
+func get_helper_indices*(index: static GeneralizedIndex): auto =
+  get_helper_indices([index])
 
 # https://github.com/ethereum/consensus-specs/blob/v1.1.6/ssz/merkle-proofs.md#merkle-multiproofs
 func check_multiproof_acceptable*(
@@ -275,8 +301,8 @@ func verify_merkle_multiproof*(
 # https://github.com/ethereum/consensus-specs/blob/v1.1.6/tests/core/pyspec/eth2spec/test/helpers/merkle.py#L4-L21
 func build_proof*(
     anchor: auto,
-    indices: openArray[GeneralizedIndex],
-    helper_indices: openArray[GeneralizedIndex],
+    indices: seq[GeneralizedIndex],
+    helper_indices: seq[GeneralizedIndex],
     proof: var openArray[Digest]): Result[void, string] =
   doAssert proof.len == helper_indices.len
   ? check_multiproof_acceptable(indices)
@@ -284,16 +310,16 @@ func build_proof*(
 
 func build_proof*(
     anchor: auto,
-    indices: openArray[GeneralizedIndex],
+    indices: seq[GeneralizedIndex],
     proof: var openArray[Digest]): Result[void, string] =
   ? check_multiproof_acceptable(indices)
   let helper_indices = get_helper_indices(indices)
   doAssert proof.len == helper_indices.len
   hash_tree_root(anchor, helper_indices, proof)
 
-func build_proof*(
+func build_proof*[N](
     anchor: auto,
-    indices: static openArray[GeneralizedIndex],
+    indices: static array[N, GeneralizedIndex],
     proof: var openArray[Digest]): Result[void, string] =
   const v = check_multiproof_acceptable(indices)
   when v.isErr:
@@ -312,10 +338,10 @@ func build_proof*(
   doAssert proof.len == helper_indices.len
   hash_tree_root(anchor, helper_indices, proof)
 
-func build_proof*(
+func build_proof*[N](
     anchor: auto,
     index: static GeneralizedIndex,
-    proof: var openArray[Digest]): Result[void, string] =
+    proof: var array[N, Digest]): Result[void, string] =
   const v = check_multiproof_acceptable(index)
   when v.isErr:
     result.err(v.error)
@@ -326,16 +352,14 @@ func build_proof*(
 
 func build_proof*(
     anchor: auto,
-    indices: openArray[GeneralizedIndex]
-): Result[seq[Digest], string] =
+    indices: seq[GeneralizedIndex]): Result[seq[Digest], string] =
   ? check_multiproof_acceptable(indices)
   let helper_indices = get_helper_indices(indices)
   hash_tree_root(anchor, helper_indices)
 
-func build_proof*(
+func build_proof*[N](
     anchor: auto,
-    indices: static openArray[GeneralizedIndex]
-): auto =
+    indices: static array[N, GeneralizedIndex]): auto =
   const v = check_multiproof_acceptable(indices)
   when v.isErr:
     Result[array[0, Digest], string].err(v.error)
@@ -345,16 +369,14 @@ func build_proof*(
 
 func build_proof*(
     anchor: auto,
-    index: GeneralizedIndex
-): Result[seq[Digest], string] =
+    index: GeneralizedIndex): Result[seq[Digest], string] =
   ? check_multiproof_acceptable(index)
   let helper_indices = get_helper_indices(index)
   hash_tree_root(anchor, helper_indices)
 
 func build_proof*(
     anchor: auto,
-    index: static GeneralizedIndex
-): auto =
+    index: static GeneralizedIndex): auto =
   const v = check_multiproof_acceptable(index)
   when v.isErr:
     Result[array[0, Digest], string].err(v.error)
