@@ -160,12 +160,25 @@ type
       ## Flattened tree store that skips "empty" branches of the tree - the
       ## starting index in this sequence of each "level" in the tree is found
       ## in `indices`.
-    indices* {.dontSerialize.}: array[hashListIndicesLen(maxChunkIdx(T, maxLen)), int64] ##\
+    indices* {.dontSerialize.}: array[hashListIndicesLen(maxChunkIdx(T, maxLen)), int64] ## \
       ## Holds the starting index in the hashes list for each level of the tree
 
+  HashCache* = object
+    hashes*: seq[Digest] ## \
+      ## Flattened tree store that skips "empty" branches of the tree - the
+      ## starting index in this sequence of each "level" in the tree is found
+      ## in `indices`.
+    indices*: seq[int64] ## \
+      ## Holds the starting index in the hashes list for each level of the tree
+
+  HashSeq*[T] = object
+    data*: seq[T]
+    caches* {.dontSerialize.}: seq[HashCache]
+
   # Note for readers:
-  # We use `array` for `Vector` and
-  #        `BitArray` for `BitVector`
+  # We use `array` for `Vector`,
+  #        `BitArray` for `BitVector`, and
+  #        `seq` for `ProgressiveList`
 
   SszError* = object of SerializationError
 
@@ -180,8 +193,8 @@ type
   # covered here needs to create overloads for toSszType / fromSszBytes
   # (basic types) or writeValue / readValue (complex types)
   SszType* =
-    BasicType | array | HashArray | List | HashList | BitArray | BitList |
-    Digest | object | tuple
+    BasicType | array | HashArray | List | HashList | HashSeq |
+    BitArray | BitList | Digest | object | tuple
 
   # Convenience aliases from specification
   ByteList*[maxLen: static Limit] = List[byte, maxLen]
@@ -215,14 +228,17 @@ func add*(x: var List, val: auto): bool =
   else:
     false
 
+template setSeqLenUninitialized*(x: untyped, newLen: int): untyped =
+  # TODO https://github.com/nim-lang/Nim/issues/19727
+  when ElemType(x) is SomeNumber:
+    if x.len != newLen:
+      x = newSeqUninitialized[x.T](newLen)
+  else:
+    setLen(x, newLen)
+
 func setLenUninitialized*(x: var List, newLen: int): bool =
   if newLen <= x.maxLen:
-    # TODO https://github.com/nim-lang/Nim/issues/19727
-    when List.T is SomeNumber:
-      if x.len !=  newLen:
-        distinctBase(x) = newSeqUninitialized[x.T](newLen)
-    else:
-      setLen(distinctBase(x), newLen)
+    setSeqLenUninitialized(distinctBase(x), newLen)
     true
   else:
     false
@@ -414,6 +430,10 @@ func resetCache*(a: var HashList) =
   a.indices = default(type a.indices)
   a.resizeHashes()
 
+func resetCache*(a: var HashSeq) =
+  a.caches.setLen(0)
+  a.resizeHashes()
+
 func resetCache*(a: var HashArray) =
   for h in a.hashes.mitems():
     clearCache(h)
@@ -444,18 +464,21 @@ template init*[T, N](L: type HashList[T, N], x: seq[T]): auto =
   tmp.resizeHashes()
   tmp
 
-template len*(x: HashList|HashArray): auto = len(x.data)
-template low*(x: HashList|HashArray): auto = low(x.data)
-template high*(x: HashList|HashArray): auto = high(x.data)
-template `[]`*(x: HashList|HashArray, idx: auto): auto = x.data[idx]
+template len*(x: HashList|HashArray|HashSeq): auto = len(x.data)
+template low*(x: HashList|HashArray|HashSeq): auto = low(x.data)
+template high*(x: HashList|HashArray|HashSeq): auto = high(x.data)
+template `[]`*(x: HashList|HashArray|HashSeq, idx: auto): auto = x.data[idx]
 template `[]`*(x: var HashList, idx: auto): auto =
   {.fatal: "Use item / mitem with `var HashXxx` to differentiate read/write access".}
   discard
 template `[]`*(x: var HashArray, idx: auto): auto =
   {.fatal: "Use item / mitem with `var HashXxx` to differentiate read/write access".}
   discard
+template `[]`*(x: var HashSeq, idx: auto): auto =
+  {.fatal: "Use item / mitem with `var HashXxx` to differentiate read/write access".}
+  discard
 
-template item*(x: HashList|HashArray, idx: auto): auto =
+template item*(x: HashList|HashArray|HashSeq, idx: auto): auto =
   # We must use a template, or the magic `unsafeAddr x[idx]` won't work, but
   # we don't want to accidentally return a `var` instance that gets mutated
   # so we avoid overloading the `[]` name
@@ -818,6 +841,9 @@ template ElemType*(T0: type HashArray): untyped =
   T0.T
 
 template ElemType*(T0: type HashList): untyped =
+  T0.T
+
+template ElemType*(T0: type HashSeq): untyped =
   T0.T
 
 template ElemType*(T: type array): untyped =

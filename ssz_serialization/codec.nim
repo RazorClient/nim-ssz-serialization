@@ -43,6 +43,9 @@ func setOutputSize(list: var List, length: int) {.raises: [SszError].} =
   if not list.setLenUninitialized length:
     raiseMalformedSszError(typeof(list), "length exceeds list limit")
 
+func setOutputSize(list: var seq, length: int) =
+  list.setSeqLenUninitialized length
+
 # fromSszBytes copies the wire representation to a Nim variable,
 # assuming there's enough data in the buffer
 func fromSszBytes*(
@@ -289,7 +292,7 @@ proc readSszValue*[T](
     if resultBytesCount == maxExpectedSize:
       checkForForbiddenBits(T, input, val.maxLen + 1)
 
-  elif val is HashList:
+  elif val is HashList|HashSeq:
     type E = typeof toSszType(declval ElemType(typeof val))
 
     when isFixedSize(E):

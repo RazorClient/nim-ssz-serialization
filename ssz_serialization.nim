@@ -107,7 +107,7 @@ template writeField*(w: var SszWriter,
     writeFixedSized(w.stream, toSszType(field))
   else:
     # `FieldType` should be `type`: https://github.com/nim-lang/Nim/issues/23564
-    template FieldType: untyped = typeof toSszType(field)
+    template FieldType: untyped {.redefine.} = typeof toSszType(field)
 
     when isFixedSize(FieldType):
       writeFixedSized(ctx.fixedParts, toSszType(field))
@@ -156,7 +156,7 @@ proc writeVarSizeType(w: var SszWriter, value: auto) {.raises: [IOError].} =
   trs "STARTING VAR SIZE TYPE"
 
   mixin toSszType
-  when value is HashArray|HashList:
+  when value is HashArray|HashList|HashSeq:
     writeVarSizeType(w, value.data)
   elif value is array:
     writeElements(w, value)
@@ -293,13 +293,13 @@ func sszSize*(value: auto): int {.gcsafe, raises:[].} =
   when isFixedSize(T):
     anonConst fixedPortionSize(T)
 
-  elif T is array|List|HashList|HashArray:
+  elif T is array|seq|List|HashList|HashArray|HashSeq:
     type E = ElemType(T)
     when isFixedSize(E):
       len(value) * anonConst(fixedPortionSize(E))
-    elif T is HashArray:
+    elif T is HashArray|HashSeq:
       sszSizeForVarSizeList(value.data)
-    elif T is array:
+    elif T is array|seq:
       sszSizeForVarSizeList(value)
     else:
       sszSizeForVarSizeList(asSeq value)
