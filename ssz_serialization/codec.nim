@@ -379,7 +379,7 @@ proc readSszValue*[T](
     val.resetCache()
   elif val is Digest:
     readSszValue(input, val.data)
-  elif val is List|array:
+  elif val is List|seq|array:
     type E = typeof toSszType(declval ElemType(typeof val))
 
     when isFixedSize(E):

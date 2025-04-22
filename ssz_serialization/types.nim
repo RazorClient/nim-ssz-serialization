@@ -193,7 +193,7 @@ type
   # covered here needs to create overloads for toSszType / fromSszBytes
   # (basic types) or writeValue / readValue (complex types)
   SszType* =
-    BasicType | array | HashArray | List | HashList | HashSeq |
+    BasicType | array | HashArray | List | HashList | seq | HashSeq |
     BitArray | BitList | Digest | object | tuple
 
   # Convenience aliases from specification
@@ -228,11 +228,11 @@ func add*(x: var List, val: auto): bool =
   else:
     false
 
-template setSeqLenUninitialized*(x: untyped, newLen: int): untyped =
+template setSeqLenUninitialized*[T](x: var seq[T], newLen: int): untyped =
   # TODO https://github.com/nim-lang/Nim/issues/19727
-  when ElemType(x) is SomeNumber:
+  when T is SomeNumber:
     if x.len != newLen:
-      x = newSeqUninitialized[x.T](newLen)
+      x = newSeqUninitialized[T](newLen)
   else:
     setLen(x, newLen)
 
