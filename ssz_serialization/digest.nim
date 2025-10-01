@@ -49,7 +49,7 @@ when PREFER_HASHTREE_SHA256 and (defined(arm64) or defined(amd64)) and (
   {.hint: "Hashtree SHA256 backend enabled".}
   const USE_HASHTREE_SHA256 = true
 
-  import ../vendor/hashtree/hashtree_abi
+  import hashtree_abi
 else:
   const USE_HASHTREE_SHA256 = false
 
