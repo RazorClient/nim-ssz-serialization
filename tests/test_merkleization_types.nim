@@ -1365,3 +1365,51 @@ suite "Merkleization types":
     check:
       hash_tree_root(x, i, roots).isErr
       hash_tree_root(x, i).isErr
+
+type
+  InnerA = object
+    a: uint64
+  InnerB = object
+    b: uint8
+
+  InnerUnionKind = enum
+    iuA, iuB
+
+  InnerUnion = object
+    case kind: InnerUnionKind
+    of iuA:
+      va: InnerA
+    of iuB:
+      vb: InnerB
+
+  OuterX = object
+    x: uint64
+  OuterY = object
+    y: seq[byte]
+
+  OuterUnionKind = enum
+    ouX, ouY, ouInner
+
+  OuterUnion = object
+    case kind: OuterUnionKind
+    of ouX:
+      ox: OuterX
+    of ouY:
+      oy: OuterY
+    of ouInner:
+      inner: InnerUnion
+
+suite "Merkleization: nested SSZ union":
+  test "hash_tree_root deterministic":
+    let iu = InnerUnion(kind: iuB, vb: InnerB(b: 99))
+    let ou = OuterUnion(kind: ouInner, inner: iu)
+    let root1 = hash_tree_root(ou)
+    let root2 = hash_tree_root(ou)
+    check root1 == root2
+
+  test "hash_tree_root varies with tag change":
+    let iuA = InnerUnion(kind: iuA, va: InnerA(a: 7))
+    let iuB = InnerUnion(kind: iuB, vb: InnerB(b: 8))
+    let ou1 = OuterUnion(kind: ouInner, inner: iuA)
+    let ou2 = OuterUnion(kind: ouInner, inner: iuB)
+    check hash_tree_root(ou1) != hash_tree_root(ou2)
