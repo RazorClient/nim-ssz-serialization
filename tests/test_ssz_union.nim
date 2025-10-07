@@ -412,3 +412,6 @@ suite "SSZ Union: nested union sanity":
         ou.inner.va == dec.inner.va
       enc.len > 0
       sszSize(ou) == enc.len
+
+
+
