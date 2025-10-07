@@ -2,7 +2,7 @@ name: CI
 on:
   push:
     branches:
-      - master
+      - CI
   pull_request:
   workflow_dispatch:
 
@@ -169,7 +169,7 @@ jobs:
           # Set GCC-14 as the default
           sudo update-alternatives --set gcc /usr/bin/gcc-14
 
-      - name: Run tests
+      - name: Run tests with vendor
         run: |
           if [[ "${{ matrix.target.os }}" == "windows" ]]; then
             # https://github.com/status-im/nimbus-eth2/issues/3121
@@ -179,6 +179,18 @@ jobs:
           nimble --version
           gcc --version
           nimble install -y --depsOnly
+          echo "=== Testing with ../vendor (vendored dependencies) ==="
+          env TEST_LANG="c" NIMFLAGS="${NIMFLAGS}" nimble test
+          env TEST_LANG="cpp" NIMFLAGS="${NIMFLAGS}" nimble test
+
+      - name: Remove vendor and run tests with nimble
+        run: |
+          if [[ "${{ matrix.target.os }}" == "windows" ]]; then
+            export NIMFLAGS="-d:nimRawSetjmp"
+          fi
+          echo "=== Removing vendor directory ==="
+          rm -rf vendor
+          echo "=== Testing with nimble (installed dependencies) ==="
           env TEST_LANG="c" NIMFLAGS="${NIMFLAGS}" nimble test
           env TEST_LANG="cpp" NIMFLAGS="${NIMFLAGS}" nimble test
 
